@@ -10,9 +10,17 @@ import subprocess
 import sys
 import time
 import warnings
+import os
 from io import StringIO
 
 warnings.filterwarnings("ignore")
+
+# detect whether we're in Colab or running locally - affects where files get saved
+try:
+    import google.colab
+    OUTPUT_DIR = "/content"
+except ImportError:
+    OUTPUT_DIR = os.path.dirname(os.path.abspath(__file__)) if "__file__" in dir() else "."
 
 
 # ---- config - update these when new polls come out ----
@@ -76,6 +84,7 @@ import pandas as pd
 import requests
 from bs4 import BeautifulSoup
 import matplotlib
+# Agg works without a display - fine for terminal, Jupyter and Colab
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
@@ -282,12 +291,15 @@ def fetch_polling():
                         scraped[party] = val
                     except (ValueError, TypeError):
                         pass
-            if len(scraped) >= 4:
+            # validate before accepting - sometimes we scrape a date like "3-5 Jun"
+            # as a value, which produces nonsense shares
+            valid = {p: v for p, v in scraped.items()
+                     if isinstance(v, float) and 0.01 <= v <= 0.65}
+            if len(valid) >= 4 and 0.40 <= sum(valid.values()) <= 1.30:
                 for p in GB_PARTIES:
-                    scraped.setdefault(p, 0.005)
-                total    = sum(scraped[p] for p in GB_PARTIES)
-                result   = {p: scraped[p] / total for p in GB_PARTIES}
-                # Try to read the date from the first column
+                    valid.setdefault(p, 0.005)
+                total  = sum(valid[p] for p in GB_PARTIES)
+                result = {p: valid[p] / total for p in GB_PARTIES}
                 try:
                     POLLING_DATE = str(tbl.iloc[0, 0])
                 except Exception:
@@ -450,7 +462,7 @@ def build_synthetic_results():
         "East Midlands":   {"LAB":0.95,"CON":1.12,"LDM":0.80,"REF":1.15,"GRN":0.85,"IND":0.90},
         "West Midlands":   {"LAB":1.00,"CON":1.05,"LDM":0.75,"REF":1.15,"GRN":0.80,"IND":0.95},
         "East of England": {"LAB":0.62,"CON":1.55,"LDM":1.10,"REF":1.10,"GRN":0.90,"IND":0.90},
-        "London":          {"LAB":1.35,"CON":0.68,"LDM":1.25,"REF":0.45,"GRN":1.50,"IND":1.40},
+        "London":          {"LAB":1.35,"CON":0.68,"LDM":1.25,"REF":0.45,"GRN":1.10,"IND":1.40},
         "South East":      {"LAB":0.55,"CON":1.60,"LDM":1.80,"REF":0.88,"GRN":1.05,"IND":0.95},
         "South West":      {"LAB":0.55,"CON":1.15,"LDM":1.60,"REF":0.88,"GRN":1.10,"IND":0.95},
         "Wales":           {"LAB":1.15,"CON":0.72,"LDM":0.68,"REF":0.85,"GRN":0.85,"IND":1.25},
@@ -486,11 +498,21 @@ def build_synthetic_results():
                         mult = rmult.get(p, 1.0)
                         # Geographic concentration for smaller parties
                         if p == "SNP" and region == "Scotland":
-                            mult = (12.0 if i % 3 != 1 else 5.0) if year >= 2015 else (3.0 if i % 3 != 1 else 1.2)
+                            if year == 2024:
+                                # SNP won 9 seats in 2024 - concentrate heavily in ~9 seats
+                                mult = 18.0 if i < 9 else 0.8
+                            elif year >= 2015:
+                                mult = 12.0 if i % 3 != 1 else 5.0
+                            else:
+                                mult = 3.0 if i % 3 != 1 else 1.2
                         elif p == "SNP":
                             mult = 0.0
                         elif p == "PC" and region == "Wales":
-                            mult = 30.0 if i < 10 else (12.0 if i < 20 else 3.5)
+                            if year == 2024:
+                                # PC won 4 seats in 2024 on 0.7% - very concentrated
+                                mult = 60.0 if i < 4 else (8.0 if i < 10 else 1.5)
+                            else:
+                                mult = 30.0 if i < 10 else (12.0 if i < 20 else 3.5)
                         elif p == "LAB" and region == "Wales" and i < 10:
                             mult = 0.75
                         elif p == "PC":
@@ -500,13 +522,13 @@ def build_synthetic_results():
                         elif p == "LDM" and region == "South East":
                             mult = rmult.get("LDM", 1.0) * (2.0 if i % 8 == 0 else 0.8)
                         elif p == "GRN" and region == "London":
-                            mult = rmult.get("GRN", 1.0) * (4.0 if i < 4 else 0.45)
+                            mult = rmult.get("GRN", 1.0) * (5.0 if i < 2 else 0.35)  # 2 strong Green London seats
                         elif p == "GRN" and region == "South East":
-                            mult = rmult.get("GRN", 1.0) * (5.0 if i < 2 else 0.60)
+                            mult = rmult.get("GRN", 1.0) * (7.0 if i < 1 else 0.40)  # Brighton Pavilion
                         elif p == "GRN" and region == "South West":
-                            mult = rmult.get("GRN", 1.0) * (4.0 if i < 2 else 0.55)
+                            mult = rmult.get("GRN", 1.0) * (6.5 if i < 2 else 0.40)  # Bristol Central + one more SW seat
                         elif p == "GRN" and region == "East of England":
-                            mult = rmult.get("GRN", 1.0) * (3.5 if i < 2 else 0.55)
+                            mult = rmult.get("GRN", 1.0) * (3.5 if i < 1 else 0.40)  # Norwich South area
                         elif p == "REF" and region in ("Yorkshire", "East Midlands",
                                                         "North East", "North West"):
                             mult = rmult.get("REF", 1.0) * (1.8 if i % 4 == 0 else 1.0)
@@ -594,6 +616,7 @@ N_FEAT = len(DEMO_FEATURES)
 n_gb   = election_data_gb[2024]["n"]
 n_ni   = election_data_ni[2024]["n"]
 
+n_total = n_gb + n_ni
 print(f"  {n_gb} GB seats + {n_ni} NI seats, {N_GB_REGIONS} regions")
 
 
@@ -826,6 +849,39 @@ try:
     # swing weighted by seat marginality, modulate with NUTS demographic signal.
     v24_act  = np.clip(data_2024_gb["votes"], 1e-6, 1)
     v24_act /= v24_act.sum(axis=1, keepdims=True)
+
+    # reinforce 2024 geographic concentration for SNP and PC
+    # the synthetic builder gets this right but the NUTS posterior smears it out
+    # so we nudge the anchor directly to match the actual 2024 results
+    snp_idx  = GB_PARTIES.index("SNP")
+    pc_idx   = GB_PARTIES.index("PC")
+    regions_ = data_2024_gb["regions"]
+
+    scot_seats = np.where(np.array(regions_) == "Scotland")[0]
+    wales_seats= np.where(np.array(regions_) == "Wales")[0]
+
+    # SNP: top 9 Scottish seats should have ~45-55% SNP (actual 2024 wins)
+    snp_shares = v24_act[scot_seats, snp_idx]
+    snp_order  = scot_seats[np.argsort(snp_shares)[::-1]]
+    for j, seat in enumerate(snp_order):
+        if j < 9:
+            v24_act[seat, snp_idx] = max(v24_act[seat, snp_idx], 0.42)
+        else:
+            v24_act[seat, snp_idx] = min(v24_act[seat, snp_idx], 0.18)
+
+    # PC: top 4 Welsh seats should have ~45-55% PC (actual 2024 wins)
+    pc_shares = v24_act[wales_seats, pc_idx]
+    pc_order  = wales_seats[np.argsort(pc_shares)[::-1]]
+    for j, seat in enumerate(pc_order):
+        if j < 4:
+            v24_act[seat, pc_idx] = max(v24_act[seat, pc_idx], 0.44)
+        else:
+            v24_act[seat, pc_idx] = min(v24_act[seat, pc_idx], 0.12)
+
+    # renormalise rows after adjustments
+    v24_act = np.clip(v24_act, 1e-6, 1)
+    v24_act /= v24_act.sum(axis=1, keepdims=True)
+
     log_v24  = np.log(v24_act)
     log_v24 -= log_v24.max(axis=1, keepdims=True)
 
@@ -902,6 +958,7 @@ try:
     log_theta_mean -= log_theta_mean.mean(axis=0, keepdims=True)
 
     theta_post = np.zeros((n_gb, n_samples, N_GB))
+    DEV_SCALE = 0.30  # weight given to NUTS deviation vs the 2024 anchor
     for s in range(n_samples):
             mu_s    = (alpha_flat[s][None, :]
                        + data_2024_gb["X"] @ beta_flat[s]
@@ -1117,6 +1174,11 @@ con_maj_prob = (con_seats_sim > total_sitting / 2).mean()
 ref_maj_prob = (ref_seats_sim > total_sitting / 2).mean()
 hung_prob    = max(0.0, 1.0 - lab_maj_prob - con_maj_prob - ref_maj_prob)
 
+# aliases used in the dashboard panels
+lab_majority_prob = lab_maj_prob
+con_majority_prob = con_maj_prob
+ref_majority_prob = ref_maj_prob
+
 print(f"\nGB Forecast — {POLLING_DATE}")
 print(f"  {'Party':<6}  {'Mean':>5}  {'[5%–95%]':>10}  Notes")
 print("  " + "-" * 48)
@@ -1230,7 +1292,6 @@ if True:
              f"Hierarchical Bayesian · 8-election backtest · {POLLING_DATE}",
              ha="center", va="top", fontsize=9.5, color="#8b949e")
 
-    dpbar.set_postfix_str("layout")
     fig = plt.figure(figsize=(24, 32), facecolor="#0d1117")
     gs  = gridspec.GridSpec(5, 2, figure=fig,
                             hspace=0.44, wspace=0.30,
@@ -1241,10 +1302,8 @@ if True:
              f"Multi-party · LAB CON LDM SNP PC GRN REF IND + NI parties · "
              f"Proportional swing · {POLLING_DATE}",
              ha="center", va="top", fontsize=9.5, color="#8b949e")
-    dpbar.update(1)
 
     # ── P1: Brier score ───────────────────────────────────────────────────────
-    dpbar.set_postfix_str(PANELS[0])
     ax1 = fig.add_subplot(gs[0,0])
     ax1.set_title("Backtest Brier Score (lower = better)", pad=8,
                   fontsize=10, color="#e6edf3")
@@ -1270,10 +1329,8 @@ if True:
     ax1b.set_ylim(50, 105)
     ax1b.legend(fontsize=7.5, loc="lower right",
                 facecolor="#161b22", edgecolor="#30363d")
-    dpbar.update(1)
 
     # ── P2: Seat count accuracy ───────────────────────────────────────────────
-    dpbar.set_postfix_str(PANELS[1])
     ax2 = fig.add_subplot(gs[0,1])
     ax2.set_title("Seat Count: Predicted vs Actual — LAB, CON, LDM, SNP",
                   pad=8, fontsize=10, color="#e6edf3")
@@ -1292,10 +1349,8 @@ if True:
                 alpha=0.6, label=f"Majority ({MAJORITY})")
     ax2.legend(fontsize=6, ncol=4, facecolor="#161b22", edgecolor="#30363d")
     ax2.grid(axis="y", alpha=0.4); ax2.tick_params(labelsize=8)
-    dpbar.update(1)
 
     # ── P3: Forecast seat distribution ───────────────────────────────────────
-    dpbar.set_postfix_str(PANELS[2])
     ax3 = fig.add_subplot(gs[1,0])
     ax3.set_title(f"Next GE GB Seat Forecast  ({POLLING_DATE})",
                   pad=8, fontsize=10, color="#e6edf3")
@@ -1320,10 +1375,8 @@ if True:
     ax3.set_ylim(0, max(m3)*1.28)
     ax3.legend(fontsize=8, facecolor="#161b22", edgecolor="#30363d")
     ax3.grid(axis="y", alpha=0.4); ax3.tick_params(labelsize=9)
-    dpbar.update(1)
 
     # ── P4: Majority probability ──────────────────────────────────────────────
-    dpbar.set_postfix_str(PANELS[3])
     ax4 = fig.add_subplot(gs[1,1])
     ax4.set_title("Parliamentary Majority Probability\n(SF abstention model)",
                   pad=8, fontsize=10, color="#e6edf3")
@@ -1340,10 +1393,8 @@ if True:
     for t  in texts: t.set_color("#e6edf3"); t.set_fontsize(9)
     ax4.text(0,0, f"{n_total} seats\n{N_SIMS//1000}k sims",
              ha="center", va="center", fontsize=8, color="#8b949e")
-    dpbar.update(1)
 
     # ── P5: Vote share history ────────────────────────────────────────────────
-    dpbar.set_postfix_str(PANELS[4])
     ax5 = fig.add_subplot(gs[2,0])
     ax5.set_title("GB National Vote Share History + Forecast",
                   pad=8, fontsize=10, color="#e6edf3")
@@ -1370,10 +1421,8 @@ if True:
     ax5.legend(fontsize=7.5, ncol=6, facecolor="#161b22", edgecolor="#30363d",
                loc="upper center", bbox_to_anchor=(0.5,-0.12))
     ax5.grid(alpha=0.4); ax5.tick_params(labelsize=8)
-    dpbar.update(1)
 
     # ── P6: Regional seat breakdown ───────────────────────────────────────────
-    dpbar.set_postfix_str(PANELS[5])
     ax6 = fig.add_subplot(gs[2,1])
     ax6.set_title("Forecast GB Seats by Region", pad=8,
                   fontsize=10, color="#e6edf3")
@@ -1403,10 +1452,8 @@ if True:
     ax6.set_ylabel("Seats", color="#8b949e", fontsize=9)
     ax6.legend(fontsize=7, ncol=4, facecolor="#161b22", edgecolor="#30363d")
     ax6.grid(axis="y", alpha=0.4); ax6.tick_params(labelsize=7)
-    dpbar.update(1)
 
     # ── P7: Top 25 marginals ──────────────────────────────────────────────────
-    dpbar.set_postfix_str(PANELS[6])
     ax7 = fig.add_subplot(gs[3,0])
     ax7.set_title("Top 25 Most Competitive GB Seats", pad=8,
                   fontsize=10, color="#e6edf3")
@@ -1425,10 +1472,8 @@ if True:
     ax7.set_xlim(30, 85); ax7.invert_yaxis()
     ax7.legend(fontsize=7.5, facecolor="#161b22", edgecolor="#30363d")
     ax7.grid(axis="x", alpha=0.4); ax7.tick_params(labelsize=7)
-    dpbar.update(1)
 
     # ── P8: MC histogram ─────────────────────────────────────────────────────
-    dpbar.set_postfix_str(PANELS[7])
     ax8 = fig.add_subplot(gs[3,1])
     ax8.set_title(f"Monte Carlo Seat Distribution — LAB, CON, REF, LDM\n"
                   f"({N_SIMS:,} simulations)", pad=8, fontsize=10, color="#e6edf3")
@@ -1450,10 +1495,8 @@ if True:
     ax8.set_ylabel("Frequency", color="#8b949e", fontsize=9)
     ax8.legend(fontsize=7.5, facecolor="#161b22", edgecolor="#30363d")
     ax8.grid(alpha=0.4); ax8.tick_params(labelsize=8)
-    dpbar.update(1)
 
     # ── P9: NI forecast ───────────────────────────────────────────────────────
-    dpbar.set_postfix_str(PANELS[8])
     ax9 = fig.add_subplot(gs[4,0])
     ax9.set_title("Northern Ireland Forecast — NI-specific parties",
                   pad=8, fontsize=10, color="#e6edf3")
@@ -1477,10 +1520,8 @@ if True:
                  fontsize=6.5, color="#8b949e",
                  arrowprops=dict(arrowstyle="->", color="#8b949e", lw=0.8))
     ax9.grid(axis="y", alpha=0.4); ax9.tick_params(labelsize=9)
-    dpbar.update(1)
 
     # ── P10: Minor party detail ───────────────────────────────────────────────
-    dpbar.set_postfix_str(PANELS[9])
     ax10 = fig.add_subplot(gs[4,1])
     ax10.set_title("Reform / SNP / PC / GRN / IND — Seat distribution",
                    pad=8, fontsize=10, color="#e6edf3")
@@ -1501,10 +1542,9 @@ if True:
     ax10.set_ylabel("Frequency", color="#8b949e", fontsize=9)
     ax10.legend(fontsize=7.5, facecolor="#161b22", edgecolor="#30363d")
     ax10.grid(alpha=0.4); ax10.tick_params(labelsize=8)
-    dpbar.update(1)
 
     # ── Save ──────────────────────────────────────────────────────────────────
-    plt.savefig("uk_election_dashboard.png", dpi=150, bbox_inches="tight",
+    plt.savefig(os.path.join(OUTPUT_DIR, "uk_election_dashboard.png"), dpi=150, bbox_inches="tight",
                 facecolor="#0d1117", edgecolor="none")
 
 print("\ndashboard saved as uk_election_dashboard.png")
@@ -1525,17 +1565,17 @@ fc_gb_df = pd.DataFrame({
     "forecast_winner": [GB_PARTIES[forecast_mrp_gb[i].argmax()] for i in range(n_gb)],
     "competitiveness": competitiveness,
 }).sort_values("competitiveness", ascending=False)
-fc_gb_df.to_csv("uk_election_gb_forecast.csv", index=False)
-print(f"saved GB forecast: {len(fc_gb_df)} rows -> uk_election_gb_forecast.csv")
+fc_gb_df.to_csv(os.path.join(OUTPUT_DIR, "uk_election_gb_forecast.csv"), index=False)
+print(f"saved GB forecast: {len(fc_gb_df)} rows -> {OUTPUT_DIR}/uk_election_gb_forecast.csv")
 
 fc_ni_df = pd.DataFrame({
     "constituency":    data_2024_ni["ids"],
     "region":          data_2024_ni["regions"],
     **{f"forecast_{p}": forecast_ni[:, i] for i, p in enumerate(NI_PARTIES)},
     "forecast_winner": [NI_PARTIES[forecast_ni[i].argmax()] for i in range(n_ni)],
-})
-fc_ni_df.to_csv("uk_election_ni_forecast.csv", index=False)
-print(f"saved NI forecast: {len(fc_ni_df)} rows -> uk_election_ni_forecast.csv")
+})x
+fc_ni_df.to_csv(os.path.join(OUTPUT_DIR, "uk_election_ni_forecast.csv"), index=False)
+print(f"saved NI forecast: {len(fc_ni_df)} rows -> {OUTPUT_DIR}/uk_election_ni_forecast.csv")
 
 bt_df = pd.DataFrame([{
     "year": y,
@@ -1545,8 +1585,8 @@ bt_df = pd.DataFrame([{
     **{f"actual_{p}": backtest_results[y]["actual_seats"].get(p, 0) for p in GB_PARTIES},
     "runtime_s":     backtest_results[y]["elapsed"],
 } for y in BACKTEST_YEARS])
-bt_df.to_csv("uk_election_backtest.csv", index=False)
-print(f"saved backtest: {len(bt_df)} rows -> uk_election_backtest.csv")
+bt_df.to_csv(os.path.join(OUTPUT_DIR, "uk_election_backtest.csv"), index=False)
+print(f"saved backtest: {len(bt_df)} rows -> {OUTPUT_DIR}/uk_election_backtest.csv")
 
 total_rt = time.time() - t_backtest_start
 print(f"\nall done in {total_rt/60:.1f} minutes")
