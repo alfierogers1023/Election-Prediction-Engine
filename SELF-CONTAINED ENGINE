@@ -1,11 +1,3 @@
-# UK General Election Forecasting Model
-# Uses MRP (Multilevel Regression with Post-stratification) - same method as YouGov
-# Pulls live data from HoC Library, ONS Nomis, Wikipedia polling and Democracy Club
-# Covers GB parties (LAB CON LDM SNP PC GRN REF IND) + NI parties separately
-#
-# I built this after reading about how YouGov predicted the 2017 hung parliament -
-# wanted to understand how constituency-level forecasting actually works under the hood
-
 import subprocess
 import sys
 import time
@@ -15,8 +7,6 @@ from io import StringIO
 
 warnings.filterwarnings("ignore")
 
-# detect whether we're in Colab or running locally - affects where files get saved
-try:
     import google.colab
     OUTPUT_DIR = "/content"
 except ImportError:
@@ -25,8 +15,7 @@ except ImportError:
 
 # ---- config - update these when new polls come out ----
 
-# latest YouGov (26 May 2026) - script tries to scrape live polls first
-# but these are used as fallback if Wikipedia is down
+# latest YouGov (26 May 2026) - script tries to scrape live polls first but these are used as fallback if Wikipedia is down
 GB_POLLING = {
     "LAB": 0.17,
     "CON": 0.19,
@@ -50,9 +39,6 @@ NI_POLLING = {
 
 POLLING_DATE = "26 May 2026 (YouGov)"  # gets overwritten if scraping works
 
-# how much of the national swing actually reaches each constituency
-# smaller parties with concentrated votes (LDM, SNP) are more efficient under FPTP
-# Reform is spread everywhere so they convert votes to seats less well
 SWING_DAMPEN_BY_PARTY = {
     "LAB": 0.65, "CON": 0.65, "LDM": 0.75,
     "SNP": 0.60, "PC":  0.60, "GRN": 0.70,
