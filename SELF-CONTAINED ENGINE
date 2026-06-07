@@ -1,4 +1,10 @@
 # UK General Election Forecasting Model
+# Uses MRP (Multilevel Regression with Post-stratification) - same method as YouGov
+# Pulls live data from HoC Library, ONS Nomis, Wikipedia polling and Democracy Club
+# Covers GB parties (LAB CON LDM SNP PC GRN REF IND) + NI parties separately
+#
+# I built this after reading about how YouGov predicted the 2017 hung parliament -
+# wanted to understand how constituency-level forecasting actually works under the hood
 
 import subprocess
 import sys
@@ -641,9 +647,9 @@ def build_mrp_model(X, votes, region_idx, n_regions, parties):
     return model
 
 
-# ------------------------
+# ---------------------------------------------------------------------------
 # 4. Backtesting 1997–2019
-# ------------------------
+# ---------------------------------------------------------------------------
 
 def get_winner(row, parties):
     return parties[np.argmax(row)]
@@ -707,9 +713,9 @@ for year in BACKTEST_YEARS:
         bs   = brier_score(theta_map, v_norm)
         sacc = seat_accuracy(theta_map, v_norm, GB_PARTIES)
 
-        pred_seats   = {p: sum(1 for r in theta_map if winner(r,GB_PARTIES)==p)
+        pred_seats   = {p: sum(1 for r in theta_map if get_winner(r,GB_PARTIES)==p)
                         for p in GB_PARTIES}
-        actual_seats = {p: sum(1 for r in v_norm   if winner(r,GB_PARTIES)==p)
+        actual_seats = {p: sum(1 for r in v_norm   if get_winner(r,GB_PARTIES)==p)
                         for p in GB_PARTIES}
         elapsed = time.time() - t0
 
@@ -727,9 +733,9 @@ for year in BACKTEST_YEARS:
         v_fb = v_fb / v_fb.sum(axis=1, keepdims=True)
         backtest_results[year] = {
             "brier_score": brier_score(v_fb, v_fb), "seat_accuracy": 1.0,
-            "pred_seats":   {p: sum(1 for r in v_fb if winner(r,GB_PARTIES)==p)
+            "pred_seats":   {p: sum(1 for r in v_fb if get_winner(r,GB_PARTIES)==p)
                              for p in GB_PARTIES},
-            "actual_seats": {p: sum(1 for r in v_fb if winner(r,GB_PARTIES)==p)
+            "actual_seats": {p: sum(1 for r in v_fb if get_winner(r,GB_PARTIES)==p)
                              for p in GB_PARTIES},
             "theta_map": v_fb, "elapsed": 0,
             "beta_map": np.zeros((N_FEAT,N_GB-1)),
@@ -851,7 +857,7 @@ try:
     # constituency_swing starts as uniform weight per party
     constituency_swing = national_swing[None, :] * swing_weight[:, None]  # (n_gb, N_GB)
 
-    # Apply incumbency protection to reduce adverse swing for current holder
+    # Apply incumbency protection: reduce adverse swing for current holder
     for seat_i in range(n_gb):
         holder_pi = winner_24[seat_i]
         holder_party = GB_PARTIES[holder_pi]
@@ -861,10 +867,10 @@ try:
             constituency_swing[seat_i, holder_pi] *= (1.0 - INCUMBENCY_DAMPEN)
 
     # ── Reform tactical squeeze ───────────────────────────────────────────
-    # In seats where Reform are clearly 3rd or lower (>8pp behind 2nd place),
-    # reduce their effective swing by 30% — tactical voters drift to Tory/Labour.
-    # This is the single most important calibration for Reform seat predictions.
-    # Evidence: 2024 showed Reform vote held up poorly where they had no chance.
+    # In seats where REF are clearly 3rd or lower (>8pp behind 2nd place),
+    # reduce their effective swing by 30% — tactical voters drift to CON/LAB.
+    # This is the single most important calibration for REF seat predictions.
+    # Evidence: 2024 showed REF vote held up poorly where they had no chance.
     ref_vote_24    = v24_act[:, ref_idx_gb]                         # (n_gb,)
     second_place_24= v24_sorted[:, 1]                              # (n_gb,)
     # REF gap to 2nd place where they're 3rd+
@@ -1018,9 +1024,11 @@ forecast_ni   = softmax(log_ni_base + log_ratio_ni[None,:] * SWING_DAMPEN, axis=
 forecast_ni_std = np.full_like(forecast_ni, 0.04)
 
 print()
-#-------------------------------
+
+
+# ---------------------------------------------------------------------------
 # 6. Monte Carlo seat simulation
-#-------------------------------
+# ---------------------------------------------------------------------------
 
 N_SIMS   = 10_000
 MAJORITY = (n_gb + n_ni) // 2 + 1
